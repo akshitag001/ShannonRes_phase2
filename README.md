@@ -113,9 +113,9 @@ All metrics were computed strictly on the fair, leak-checked 478-image Phase-2 V
 
 | Model / Configuration | PSNR ⬆️ | SSIM ⬆️ | LPIPS ⬇️ | Highlight Retention ⬆️ |
 |---|---|---|---|---|
-| Baseline (Charbonnier + Sobel Only, No SSIM) | - | - | - | ~39.00% |
-| Frequency (FFT) Loss Finetuned | 22.40 | 0.575 | 0.316 | 54.12% |
-| **Final FiLM Checkpoint (`model_nafnet_film_v2.pth`)** | **22.37** | **0.573** | **0.307** | **60.47%** |
+| Baseline NAFNet (`model_nafnet_v2.pth`) | 22.10 | 0.559 | 0.325 | **66.68%** |
+| Frequency (FFT) Loss Finetuned | **22.40** | **0.575** | 0.316 | 54.12% |
+| **Final FiLM Checkpoint (`model_nafnet_film_v2.pth`)** | 22.37 | 0.573 | **0.307** | 60.47% |
 
 *(Note: While the FFT-finetuned model marginally improved PSNR/SSIM, it severely degraded LPIPS perceptual quality and highlight retention, leading to its rejection in favor of the final FiLM checkpoint.)*
 
