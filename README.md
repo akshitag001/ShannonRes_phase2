@@ -71,6 +71,8 @@ graph TD
     Clamp --> Output[Restored HR Output <br/> Shape: Bx1x2Hx2W]
 ```
 
+![Phase 2 Architecture Detailed](docs/PHASE2ARCH.png)
+
 ---
 
 ## 🚀 Quick Start
