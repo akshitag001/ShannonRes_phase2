@@ -92,6 +92,35 @@ python run.py /path/to/test_input_dir /path/to/output_dir
 
 ---
 
+## 🏋️ Training and Reproduction
+
+To reproduce the final submitted FiLM checkpoint, we provide a complete training pipeline. The model is warm-started from the `weights/model_nafnet_v2.pth` base checkpoint to accelerate convergence.
+
+```bash
+python train.py --config configs/final_model.yaml
+```
+
+### Verified Training Parameters
+The following hyperparameter settings are explicitly set and verified in the source code (`configs/final_model.yaml` and `src/dataset.py`):
+- **Seed**: `42`
+- **LPIPS Weight (`lambda_lpips`)**: `0.5`
+- **Data Augmentations**:
+  - **Synthetic Degradation**: 50% probability (`synthesize_prob: 0.5`) of applying randomized multiplicative Speckle noise ($\sigma \in [0.1, 0.4]$) and additive Gaussian noise ($\sigma \in [0.05, 0.2]$) before downsampling.
+  - **Geometric**: Random 128x128 patches (GT), 50% Horizontal Flip, 50% Vertical Flip, and Random 90° Rotations.
+
+### Ablation Studies (Phase-2 Validation Split)
+All metrics were computed strictly on the fair, leak-checked 478-image Phase-2 Validation Split.
+
+| Model / Configuration | PSNR ⬆️ | SSIM ⬆️ | LPIPS ⬇️ | Highlight Retention ⬆️ |
+|---|---|---|---|---|
+| Baseline (Charbonnier + Sobel Only, No SSIM) | - | - | - | ~39.00% |
+| Frequency (FFT) Loss Finetuned | 22.40 | 0.575 | 0.316 | 54.12% |
+| **Final FiLM Checkpoint (`model_nafnet_film_v2.pth`)** | **22.37** | **0.573** | **0.307** | **60.47%** |
+
+*(Note: While the FFT-finetuned model marginally improved PSNR/SSIM, it severely degraded LPIPS perceptual quality and highlight retention, leading to its rejection in favor of the final FiLM checkpoint.)*
+
+---
+
 ## 📂 Repository Structure
 ```text
 ShannonRes/
