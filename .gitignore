@@ -1,15 +1,35 @@
-dataset/
+# Python
 __pycache__/
-*.pyc
-.DS_Store
-weights/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env/
+.ipynb_checkpoints/
+
+# Data and Artifacts (Never commit raw datasets)
+dataset/
+PHASE2DATASET/
+testdatasetsemicon/
+*.npy
+!outputs/*.npy
+
+# Model Checkpoints (Ignore all EXCEPT the final submitted one)
+weights/*.pth
+weights/*.onnx
+!weights/model_nafnet_film_v2.pth
+weights/*.csv
+
+# Logs and Scratch Outputs
+scratch/
 results/
+diagnostics/
+experimental/
+*.csv
 
-# Ignore all markdown files except README.md
-*.md
-!README.md
-
-# Ignore all images
-*.png
-*.jpg
-*.jpeg
+# IDEs and OS files
+.idea/
+.vscode/
+*.swp
+.DS_Store

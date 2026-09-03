@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import matplotlib.pyplot as plt
 from src.model import RestorationCNN
+from src.models.nafnet import NAFNet
 
 class InferenceDataset(Dataset):
     def __init__(self, input_dir):
@@ -28,6 +29,7 @@ def main():
     parser.add_argument("--input_dir", type=str, required=True, help="Directory containing input .npy files")
     parser.add_argument("--output_dir", type=str, required=True, help="Directory to save output .npy files")
     parser.add_argument("--checkpoints", type=str, nargs="+", default=[os.path.join("weights", "best_model_seed2.pth")], help="Paths to model checkpoints for ensembling")
+    parser.add_argument("--model", type=str, default="restoration_cnn", help="Model architecture")
     parser.add_argument("--fast", action="store_true", help="Skip TTA for faster inference")
     parser.add_argument("--with_uncertainty", action="store_true", help="Output uncertainty maps alongside restored images")
     args = parser.parse_args()
@@ -48,13 +50,24 @@ def main():
         config = checkpoint['config']
         scale = checkpoint['scale']
         
-        model = RestorationCNN(
-            in_channels=config['in_channels'],
-            out_channels=config['out_channels'],
-            num_features=config['num_features'],
-            num_res_blocks=config['num_res_blocks'],
-            scale=scale
-        ).to(device)
+        if args.model == "nafnet":
+            model = NAFNet(
+                in_channels=config.get('in_channels', 1),
+                out_channels=config.get('out_channels', 1),
+                width=config.get('width', 32),
+                enc_blk_nums=config.get('enc_blk_nums', [1, 1, 1, 28]),
+                middle_blk_num=config.get('middle_blk_num', 1),
+                dec_blk_nums=config.get('dec_blk_nums', [1, 1, 1, 1]),
+                scale=scale
+            ).to(device)
+        else:
+            model = RestorationCNN(
+                in_channels=config['in_channels'],
+                out_channels=config['out_channels'],
+                num_features=config['num_features'],
+                num_res_blocks=config['num_res_blocks'],
+                scale=scale
+            ).to(device)
         
         model.load_state_dict(checkpoint['model_state_dict'], strict=not args.with_uncertainty)
         if args.with_uncertainty:

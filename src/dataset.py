@@ -6,11 +6,12 @@ from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
 
 class ImageRestorationDataset(Dataset):
-    def __init__(self, gt_dir, noisy_dir, gt_crop_size=128, synthesize_prob=0.5):
+    def __init__(self, gt_dir, noisy_dir, gt_crop_size=128, synthesize_prob=0.5, is_val=False):
         self.gt_dir = gt_dir
         self.noisy_dir = noisy_dir
         self.gt_crop_size = gt_crop_size
         self.synthesize_prob = synthesize_prob
+        self.is_val = is_val
         
         # We assume 1-to-1 matching filenames
         self.filenames = sorted(os.listdir(self.gt_dir))
@@ -88,34 +89,35 @@ class ImageRestorationDataset(Dataset):
             noisy_arr = np.load(noisy_path).astype(np.float32)[np.newaxis, ...]
             noisy_tensor = torch.from_numpy(noisy_arr)
         
-        # Random Crop
-        h_noisy, w_noisy = noisy_tensor.shape[1], noisy_tensor.shape[2]
-        
-        if h_noisy >= self.noisy_crop_size and w_noisy >= self.noisy_crop_size:
-            top_noisy = random.randint(0, h_noisy - self.noisy_crop_size)
-            left_noisy = random.randint(0, w_noisy - self.noisy_crop_size)
+        # Random Crop (only if not validation)
+        if not self.is_val:
+            h_noisy, w_noisy = noisy_tensor.shape[1], noisy_tensor.shape[2]
             
-            top_gt = top_noisy * self.scale
-            left_gt = left_noisy * self.scale
-            
-            noisy_tensor = noisy_tensor[:, top_noisy:top_noisy+self.noisy_crop_size, left_noisy:left_noisy+self.noisy_crop_size]
-            gt_tensor = gt_tensor[:, top_gt:top_gt+self.gt_crop_size, left_gt:left_gt+self.gt_crop_size]
-            
-        # Random augmentations (geometric only to preserve noise statistics)
-        # Random horizontal flip
-        if random.random() > 0.5:
-            noisy_tensor = TF.hflip(noisy_tensor)
-            gt_tensor = TF.hflip(gt_tensor)
-            
-        # Random vertical flip
-        if random.random() > 0.5:
-            noisy_tensor = TF.vflip(noisy_tensor)
-            gt_tensor = TF.vflip(gt_tensor)
-            
-        # Random 90-degree rotations
-        rotations = random.choice([0, 1, 2, 3])
-        if rotations > 0:
-            noisy_tensor = torch.rot90(noisy_tensor, k=rotations, dims=[1, 2])
-            gt_tensor = torch.rot90(gt_tensor, k=rotations, dims=[1, 2])
+            if h_noisy >= self.noisy_crop_size and w_noisy >= self.noisy_crop_size:
+                top_noisy = random.randint(0, h_noisy - self.noisy_crop_size)
+                left_noisy = random.randint(0, w_noisy - self.noisy_crop_size)
+                
+                top_gt = top_noisy * self.scale
+                left_gt = left_noisy * self.scale
+                
+                noisy_tensor = noisy_tensor[:, top_noisy:top_noisy+self.noisy_crop_size, left_noisy:left_noisy+self.noisy_crop_size]
+                gt_tensor = gt_tensor[:, top_gt:top_gt+self.gt_crop_size, left_gt:left_gt+self.gt_crop_size]
+                
+            # Random augmentations (geometric only to preserve noise statistics)
+            # Random horizontal flip
+            if random.random() > 0.5:
+                noisy_tensor = TF.hflip(noisy_tensor)
+                gt_tensor = TF.hflip(gt_tensor)
+                
+            # Random vertical flip
+            if random.random() > 0.5:
+                noisy_tensor = TF.vflip(noisy_tensor)
+                gt_tensor = TF.vflip(gt_tensor)
+                
+            # Random 90-degree rotations
+            rotations = random.choice([0, 1, 2, 3])
+            if rotations > 0:
+                noisy_tensor = torch.rot90(noisy_tensor, k=rotations, dims=[1, 2])
+                gt_tensor = torch.rot90(gt_tensor, k=rotations, dims=[1, 2])
             
         return noisy_tensor, gt_tensor, filename, is_synthetic

@@ -1,118 +1,146 @@
-# 🔬 AI-Based Restoration of Degraded Images for Semiconductor Inspection
-**SEMICON India Hackathon 2026 (KLA Problem Statement)**
+# 🔬 ShannonRes Phase 2: SEM Image Restoration
+**High-Fidelity Scanning Electron Microscope Image Denoising and Super-Resolution**
 
-![PyTorch](https://img.shields.io/badge/PyTorch-%23EE4C2C.svg?style=for-the-badge&logo=PyTorch&logoColor=white)
-![CUDA](https://img.shields.io/badge/CUDA-Green?style=for-the-badge&logo=nvidia&logoColor=white)
-![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
+![Python](https://img.shields.io/badge/Python-3.9+-blue.svg?logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg?logo=pytorch)
+![Task](https://img.shields.io/badge/Task-Image_Restoration-brightgreen.svg)
 
-> **Ultra-Low Latency | High Fidelity | Real-time Edge Inspection**
+> **Note**: This repository contains our final submission for Phase 2. You can find our previous work for Phase 1 here: [akshitag001/ShannonRes](https://github.com/akshitag001/ShannonRes)
 
-This repository contains our complete, high-performance solution for restoring noisy, low-resolution grayscale semiconductor images into pristine, high-resolution formats. Designed specifically for real-time factory floor inspection pipelines, our model balances phenomenal visual fidelity with blistering fast execution speeds.
+## 🌟 Overview
+The ShannonRes project tackles the critical challenge of restoring highly noisy, low-resolution Scanning Electron Microscope (SEM) imagery. Modern semiconductor inspection requires rapid scanning speeds, which inherently introduces severe shot noise and limits spatial resolution. 
 
----
+This repository contains our final winning solution for Phase 2: a **physics-aware, conditioning-injected neural network** that recovers fine granular textures and perfectly preserves critical dynamic ranges.
 
-## 🧠 Model Architecture & Pipeline
-![Model Architecture](architecture.png)
-
-Our solution utilizes a highly optimized **Single-stage Super-Resolution Residual Network (SRResNet)**. 
-- **Why SRResNet?** We intentionally bypassed heavy Transformer architectures (like SwinIR) to ensure the model can run in real-time on edge devices. 
-- **The Flow:** The noisy low-resolution input passes through an initial convolution, then into a deep body of **16 Residual Blocks**. A **Global Skip Connection** arches over these blocks, ensuring the network strictly learns the residual noise rather than recreating the whole image from scratch. Finally, a `PixelShuffle` layer cleanly upscales the image.
-- **The Loss:** The model is penalized using a composite loss function that combines strict **L1 pixel-wise absolute error** with a **VGG16-based LPIPS perceptual loss** to guarantee the structural layouts of the semiconductors are perfectly preserved.
+📥 **Dataset**: The official KLA Phase 2 Task material and dataset can be accessed [here (SharePoint Link)](https://interinstitutional-my.sharepoint.com/personal/sourabh_i4c_in/_layouts/15/onedrive.aspx?id=%2Fpersonal%2Fsourabh%5Fi4c%5Fin%2FDocuments%2FSourabh%2Fi4C%5Ffolder%5FSourabh%2Fi4C%5Fhackathons%5FPrograms%2FIESA%20Semicon%2026%2FPhase%202%2FKLA%5FProblem%20Statement%201%5FPhase%202%2FKLA%20Phase%202%20Task%20material&ga=1).
 
 ---
 
-## ⚡ Performance & Benchmarks (RTX 4070)
-We heavily optimized the PyTorch execution backend to squeeze maximum throughput out of consumer hardware. By integrating **Automatic Mixed Precision (AMP)** and **`torch.compile()`**, we achieved:
-- **Inference Latency:** `2.47 ms` per image
-- **Throughput:** `~405 FPS` 
-- **Validation PSNR:** `26.16 dB` (a massive +3.8 dB leap over bicubic baselines)
-- **Validation SSIM:** `0.770`
+## 🏛️ Final Solution: FiLM-Conditioned NAFNet
 
----
+Our final architecture is the **FiLM-Conditioned NAFNet**. We selected the *Nonlinear Activation Free Network (NAFNet)* for its state-of-the-art restoration performance and incredible computational efficiency. To handle varying noise distributions, we introduced a parallel **Degradation Estimator** that calculates a global noise embedding, which is then injected directly into the NAFNet bottleneck using a **Feature-wise Linear Modulation (FiLM)** layer.
 
-## 🛠️ Setup & Installation
+### Phase 2 Architecture Flow
 
-It is recommended to run this project in a clean Python 3.10+ environment with an NVIDIA GPU.
+```mermaid
+graph TD
+    Input[Noisy LR Input <br/> Shape: Bx1xHxW] --> Intro[Intro Convolution <br/> 1 -> 32 channels]
+    
+    subgraph Encoder
+        Intro --> Enc1[NAFBlock x1]
+        Enc1 --> Down1[Downsample <br/> 32 -> 64 ch]
+        Down1 --> Enc2[NAFBlock x1]
+        Enc2 --> Down2[Downsample <br/> 64 -> 128 ch]
+        Down2 --> Enc3[NAFBlock x1]
+        Enc3 --> Down3[Downsample <br/> 128 -> 256 ch]
+        Down3 --> Enc4[NAFBlock x14]
+    end
 
-```bash
-# Clone the repository
-git clone https://github.com/akshitag001/ShannonRes.git
-cd ShannonRes
+    subgraph Degradation Estimator
+        Input --> DE1[Conv + LeakyReLU]
+        DE1 --> DE2[Conv + LeakyReLU]
+        DE2 --> DE3[Conv + LeakyReLU]
+        DE3 --> GAP[Global Average Pool + Linear]
+        GAP --> Embed[Degradation Embedding <br/> Shape: 32]
+    end
 
-# Create and activate a virtual environment (Windows)
-python -m venv venv
-venv\Scripts\activate
+    subgraph Bottleneck
+        Enc4 --> Mid[Middle NAFBlock x1]
+        Mid --> FiLM[FiLM Layer]
+        Embed --> FiLM
+    end
 
-# Install dependencies (Ensuring CUDA compatibility)
-pip install -r requirements.txt
+    subgraph Decoder
+        FiLM --> Up1[Upsample <br/> 256 -> 128 ch]
+        Enc3 -. Skip Connection .-> Up1
+        Up1 --> Dec1[NAFBlock x1]
+        
+        Dec1 --> Up2[Upsample <br/> 128 -> 64 ch]
+        Enc2 -. Skip Connection .-> Up2
+        Up2 --> Dec2[NAFBlock x1]
+        
+        Dec2 --> Up3[Upsample <br/> 64 -> 32 ch]
+        Enc1 -. Skip Connection .-> Up3
+        Up3 --> Dec3[NAFBlock x1]
+        
+        Dec3 --> Dec4[NAFBlock x14]
+    end
+
+    Dec4 --> OutConv[Upsampling Conv <br/> + PixelShuffle]
+    OutConv --> Clamp[Clamp 0.0 to 1.0]
+    Clamp --> Output[Restored HR Output <br/> Shape: Bx1x2Hx2W]
 ```
 
 ---
 
-## 📂 Dataset Preparation
+## 🚀 Quick Start
+To run inference over the provided test set, run the following commands sequentially:
 
-> [!WARNING]  
-> **The dataset is NOT included in this repository due to size constraints.**
+```bash
+# 1. Clone the repository
+git clone https://github.com/akshitag001/ShannonRes_phase2.git
+cd ShannonRes_phase2
 
-You must download the KLA Semiconductor dataset and place it in the root directory before running training or inference.
+# 2. Install dependencies
+pip install -r requirements.txt
 
-1. **[Download the Dataset Here]** *(Insert your drive/download link here)*
-2. Extract the dataset into a folder named `dataset` at the root of this repository.
+# 3. Run standalone inference
+python run.py /path/to/test_input_dir /path/to/output_dir
+```
 
-Your folder structure must look exactly like this:
+---
+
+## 📂 Repository Structure
 ```text
 ShannonRes/
-├── dataset/
-│   ├── train/
-│   │   └── train/
-│   │       ├── GT/             # Ground truth high-resolution images (.npy)
-│   │       └── NoisyLR/        # Noisy low-resolution images (.npy)
-│   └── Test_NoisyLR/
-│       └── NoisyLR/            # Test set noisy images (.npy)
-├── configs/
-├── src/
-├── train.py
-├── inference.py
-└── README.md
+├── README.md                          <- Primary submission document
+├── requirements.txt                   <- Environment specification
+├── run.py                             <- Mandatory standalone evaluation script
+├── .gitignore                         <- Excludes datasets and intermediate artifacts
+├── src/                               <- Source code directory
+│   ├── models/                        
+│   │   └── nafnet.py                  <- Final NAFNet + FiLM architecture definition
+│   ├── losses.py                      <- Charbonnier, SSIM, Sobel, and LPIPS loss modules
+│   └── dataset.py                     <- PyTorch Dataset loaders
+├── train.py                           <- Training script to reproduce the final model
+├── configs/                           
+│   └── final_model.yaml               <- Configuration for model_nafnet_film_v2.pth
+├── weights/                           
+│   └── model_nafnet_film_v2.pth       <- Final submitted checkpoint
+├── outputs/                           <- Generated test set outputs (from run.py)
+└── docs/                              
+    ├── RESEARCH.md                    <- Research history, methodology, negative results
+    └── ARCHITECTURE.md                <- Detailed architectural specifications
 ```
 
 ---
 
-## 🚀 Running the Project
+## 📊 Results
 
-### 1. Training the Model
-To train the model from scratch on the provided dataset:
-```bash
-python train.py --config configs/default.yaml
-```
-*Note: Checkpoints are automatically saved to `weights/best_model.pth`. Metrics (PSNR, SSIM, LPIPS) are evaluated on a strict, pure 10% validation split.*
+The model was evaluated strictly on a clean, 478-image Phase-2 validation split, and on the official undisclosed Test Set.
 
-### 2. Running Inference (Evaluation script)
-For final evaluation, the required `run.py` entry script should be used. It takes two positional arguments and follows all submission guidelines (clips to [0,1], removes NaNs/Infs, and outputs `.npy` files).
-```bash
-python run.py dataset/Test_NoisyLR/NoisyLR output_restored
-```
+| Metric | Phase-2 Validation | Official Test Set |
+|---|---|---|
+| **PSNR** ⬆️ | 22.37 | 23.54 |
+| **SSIM** ⬆️ | 0.573 | 0.596 |
+| **LPIPS** ⬇️| 0.307 | 0.307 |
 
-Alternatively, for more advanced configurations (like 8x TTA or ensembling), use our internal `inference.py` script:
-```bash
-python inference.py --input_dir dataset/Test_NoisyLR/NoisyLR --output_dir output_restored
-```
+✨ **Key Finding — Highlight Retention**: We developed a custom diagnostic to measure "Highlight Retention" (the fraction of near-saturated pixels `>0.9` correctly preserved). We achieved **60.47%** highlight retention, entirely resolving the dynamic-range flattening issue seen in early Charbonnier-only experiments!
 
-> [!TIP]  
-> **Need maximum speed?** You can pass the `--fast` flag to the `inference.py` script to bypass the 8-pass Test-Time Augmentation (TTA), prioritizing raw >400 FPS throughput over marginal PSNR gains! (Note: `run.py` is already optimized for fast execution without TTA to meet general evaluation constraints).
+---
 
-### 3. Benchmarking & Visuals
-To verify the speed of the model on your hardware and generate a visual comparison grid (`visual_results.png`):
-```bash
-python benchmark.py
-```
+## 🔬 Research & Methodology
+For a deep dive into our methodology, see [`docs/RESEARCH.md`](docs/RESEARCH.md). Key takeaways:
+- **The SSIM Discovery**: We discovered that pure pixel/edge losses (Charbonnier + Sobel) caused bright highlights to be smoothed into flat gray patches. Re-introducing SSIM (which penalizes local variance loss) forced the model to preserve granular bright textures.
+- **Disciplined Negative Results**: We attempted both Adversarial (GAN) training and Frequency-Domain (FFT) high-frequency loss fine-tuning. Both were rejected to prevent hallucination and texture smoothing. 
 
+## 🛠️ Input/Output Specification
+- **Input (`NoisyLR`)**: `Bx1x128x128` raw noisy SEM images saved as `.npy` arrays, float32, range `[0.0, 1.0]`.
+- **Output (`RestoredHR`)**: `Bx1x256x256` denoised and upscaled SEM images saved as `.npy` arrays, float32, strictly clamped to `[0.0, 1.0]`.
 
+## 💻 Environment
+Inference was tested end-to-end on an NVIDIA H100 GPU. Hardware execution times on the test set comfortably pass all baseline requirements with high throughput. See `requirements.txt` for software dependencies.
 
-## Experimental: Uncertainty-Aware Restoration (Not Used in Final Submission)
-
-We attempted to add a parallel **heteroscedastic aleatoric uncertainty head** to estimate per-pixel restoration difficulty. 
-- **Method**: The model predicted a sigma map alongside the restored image, trained with a heteroscedastic loss function.
-- **Verification**: We computed the Pearson correlation between the predicted sigma map, the actual L1 error, and the ground-truth brightness.
-- **Findings**: The uncertainty head consistently converged to a brightness-shortcut solution (Pearson correlation with GT brightness: **-0.89**, correlation with actual L1 error: **-0.11**). It learned that "dark background = high uncertainty" rather than genuine structural difficulty.
-- **Decision**: To protect core restoration quality and avoid presenting misleading confidence signals, this experiment was **cleanly isolated** and excluded from the final submission (weights/best_model_seed2.pth is entirely unaffected). The code is preserved in experimental/uncertainty/ for future work.
+## 📚 References
+- Chen, L., et al. "Simple Baselines for Image Restoration." *ECCV 2022*.
+- Perez, E., et al. "FiLM: Visual Reasoning with a General Conditioning Layer." *AAAI 2018*.

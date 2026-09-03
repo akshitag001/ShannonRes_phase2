@@ -1,108 +1,80 @@
 import os
 import sys
-import argparse
-import numpy as np
 import torch
+import numpy as np
 from torch.utils.data import Dataset, DataLoader
-from src.model import RestorationCNN
+from src.models.nafnet import NAFNet
 
-class InferenceDataset(Dataset):
+class TestDataset(Dataset):
     def __init__(self, input_dir):
         self.input_dir = input_dir
-        self.filenames = sorted([f for f in os.listdir(input_dir) if f.endswith('.npy')])
+        self.files = [f for f in sorted(os.listdir(input_dir)) if f.endswith('.npy')]
         
     def __len__(self):
-        return len(self.filenames)
+        return len(self.files)
         
     def __getitem__(self, idx):
-        filename = self.filenames[idx]
-        filepath = os.path.join(self.input_dir, filename)
-        
-        # Load and prepare shape (1, H, W)
-        arr = np.load(filepath).astype(np.float32)
-        tensor = torch.from_numpy(arr).unsqueeze(0)
-        return tensor, filename
+        filename = self.files[idx]
+        path = os.path.join(self.input_dir, filename)
+        img = np.load(path).astype(np.float32)
+        return torch.from_numpy(img).unsqueeze(0), filename
 
 def main():
-    parser = argparse.ArgumentParser(description="Inference for Image Restoration")
-    parser.add_argument("input_dir", type=str, help="Directory containing input .npy files")
-    parser.add_argument("output_dir", type=str, help="Directory to save output .npy files")
-    args = parser.parse_args()
-
-    os.makedirs(args.output_dir, exist_ok=True)
+    if len(sys.argv) != 3:
+        print("Usage: python run.py <input-dir> <output-dir>")
+        sys.exit(1)
+        
+    input_dir = sys.argv[1]
+    output_dir = sys.argv[2]
+    
+    os.makedirs(output_dir, exist_ok=True)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Running inference on {device}")
     
-    # Path to model checkpoint
-    ckpt_path = os.path.join("weights", "best_model_seed2.pth")
-    if not os.path.exists(ckpt_path):
-        raise FileNotFoundError(f"Checkpoint not found at {ckpt_path}. Please place the weights properly.")
-        
-    checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
-    config = checkpoint['config']
-    scale = checkpoint.get('scale', 2)
-    
-    model = RestorationCNN(
-        in_channels=config.get('in_channels', 1),
-        out_channels=config.get('out_channels', 1),
-        num_features=config.get('num_features', 64),
-        num_res_blocks=config.get('num_res_blocks', 16),
-        scale=scale
+    # Fast initialization
+    model = NAFNet(
+        in_channels=1, out_channels=1, width=32,
+        enc_blk_nums=[1, 1, 1, 14], middle_blk_num=1,
+        dec_blk_nums=[1, 1, 1, 14], scale=2, use_film=True
     ).to(device)
     
-    # Check if model has predicting uncertainty in its state dict but we don't want it for standard inference
-    strict_load = True
-    for key in checkpoint['model_state_dict'].keys():
-        if "conv_uncertainty" in key:
-            strict_load = False
-            break
-            
-    model.load_state_dict(checkpoint['model_state_dict'], strict=strict_load)
+    model_path = os.path.join(os.path.dirname(__file__), 'weights', 'model_nafnet_film_v2.pth')
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+    model.load_state_dict(checkpoint['model_state_dict'], strict=False)
     model.eval()
     
-    original_model = model
-    try:
-        compiled_model = torch.compile(model)
-        # Dummy pass to trigger compilation and catch Triton errors immediately
-        dummy_input = torch.randn(1, config.get('in_channels', 1), 64, 64).to(device)
-        with torch.no_grad():
-            compiled_model(dummy_input)
-        model = compiled_model
-        print("Successfully compiled model with torch.compile()")
-    except Exception as e:
-        print(f"Warning: torch.compile() failed, falling back to uncompiled model. Error: {e}")
-        model = original_model
-
-    dataset = InferenceDataset(args.input_dir)
-    batch_size = config.get('batch_size', 16) # keep it reasonable
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
-
+    dataset = TestDataset(input_dir)
+    # Using multiple workers speeds up I/O significantly
+    loader = DataLoader(dataset, batch_size=16, shuffle=False, num_workers=4, pin_memory=True)
+    
+    count = 0
+    failures = 0
+    
     with torch.no_grad():
-        for batch_tensors, filenames in loader:
-            batch_tensors = batch_tensors.to(device, non_blocking=True)
-            
-            outputs = model(batch_tensors)
-            if isinstance(outputs, tuple):
-                outputs = outputs[0]
+        for batch_imgs, batch_filenames in loader:
+            batch_imgs = batch_imgs.to(device)
+            try:
+                amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                with torch.amp.autocast('cuda', dtype=amp_dtype):
+                    preds = model(batch_imgs)
                 
-            outputs = outputs.cpu().numpy()
-            
-            for i in range(len(filenames)):
-                filename = filenames[i]
-                # Squeeze channel dim (1, H, W) -> (H, W) to match input shape
-                out_arr = outputs[i].squeeze(0)
+                preds = preds.to(torch.float32)
                 
-                # Replace NaNs and Infs
-                out_arr = np.nan_to_num(out_arr, nan=0.0, posinf=1.0, neginf=0.0)
+                # Sanitize outputs for strictly valid metrics
+                preds = torch.nan_to_num(preds, nan=0.0, posinf=1.0, neginf=0.0)
+                preds = torch.clamp(preds, 0.0, 1.0)
                 
-                # Clip values to strictly [0, 1]
-                out_arr = np.clip(out_arr, 0.0, 1.0)
+                preds_np = preds.squeeze(1).cpu().numpy().astype(np.float32)
                 
-                save_path = os.path.join(args.output_dir, filename)
-                np.save(save_path, out_arr)
+                for i in range(len(batch_filenames)):
+                    out_path = os.path.join(output_dir, batch_filenames[i])
+                    np.save(out_path, preds_np[i])
+                    count += 1
+            except Exception as e:
+                print(f"Error processing batch containing {batch_filenames[0]}: {e}")
+                failures += len(batch_filenames)
                 
-    print(f"Successfully processed {len(dataset)} images and saved to {args.output_dir}")
+    print(f"Inference complete. Successfully processed: {count}. Failures: {failures}.")
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
