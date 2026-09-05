@@ -73,6 +73,15 @@ graph TD
 
 ![Phase 2 Architecture Detailed](docs/PHASE2ARCH.png)
 
+### Loss Function
+
+Our model is trained using a **Restoration Combined Loss** function, which is a carefully tuned weighted sum of four different metrics to ensure both pixel-perfect accuracy and perceptually pleasing results:
+
+1. **Charbonnier Loss ($\lambda = 1.0$)**: A differentiable approximation of L1 loss with a small $\epsilon$ for stable gradients. It enforces overall spatial correctness without penalizing outliers as heavily as L2.
+2. **SSIM Loss ($\lambda = 0.5$)**: Computed as `1 - SSIM`. It heavily penalizes structural and contrast degradation, ensuring granular high-frequency textures and dynamic ranges are preserved.
+3. **Sobel Edge Loss ($\lambda = 0.1$)**: An L1 loss applied over spatial gradients (computed via Sobel filters in X and Y directions). It explicitly forces the model to recover sharp, high-frequency edges.
+4. **LPIPS Loss ($\lambda = 0.3$)**: A learned perceptual metric that extracts deep features to ensure the generated output visually matches the ground truth texture to the human eye.
+
 ---
 
 ## 3. Quick Start
